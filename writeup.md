@@ -2,7 +2,7 @@
 Project submission for the Udacity Robotics Software Engineer Nanodegree
 
 Jonathan Georgino
-January 17 2018
+January 21 2018
 
 ---
 
@@ -13,7 +13,14 @@ January 17 2018
 [//]: # (Image References)
 [confusionmatrix]: ./figures/confusionmatrix.png
 [confusionmatrixhsv]: ./figures/confusionmatrixhsv.png
-[figure2]: ./figures/figure2.png 
+[confmatrix_project_25]: ./figures/confmatrix_project_25.png
+[confmatrix_project_45]: ./figures/confmatrix_project_45.png
+[extra_snacks]: ./figures/extrasnacks.png
+[testworld1]: ./figures/testworld1.png
+[testworld2]: ./figures/testworld2.png
+[testworld3]: ./figures/testworld3.png
+
+![testworld3]
 
 TODO: Write up summary in this section
 
@@ -30,7 +37,7 @@ This document is intended to fullfil the requirement of the Writeup / Readme.
 
 #### 1. Complete Exercise 1 steps. Pipeline for filtering and RANSAC plane fitting implemented.
 
-Please see the code in the `RANSAC.py` file of the `Exercises` directory for my solution to Exercise 1. Note the LEAF_SIZE = 0.01 was obtained by experimentation.
+Please see the code in the `RANSAC.py` file of the `Exercises` directory for my solution to Exercise 1. Note the `LEAF_SIZE = 0.01` was obtained by experimentation.
 
 #### 2. Complete Exercise 2 steps: Pipeline including clustering for segmentation implemented.  
 
@@ -63,10 +70,98 @@ The table below compares the quality of the two training models:
 
 As show in the table above, it can be seen that there is a clear advantage to using HSV color space for this type of object recognition activity.
 
+The `object_recognition.py` file in the `Exercises` directory contains the code which then uses this training data to label the objects in the point cloud.
 
 ### Pick and Place Setup
 
 #### 1. For all three tabletop setups (`test*.world`), perform object recognition, then read in respective pick list (`pick_list_*.yaml`). Next construct the messages that would comprise a valid `PickPlace` request output them to `.yaml` format.
+
+The first step in developing a solution to this project was to extract features and train an SVM model on the new objects. The list of objects (shown below) was compiled by reviewing the `pick_list_*.yaml` files in the `/pr2_robot/config/` directory.
+
+| object       | pick_list_1 | pick_list_2 | pick_list_3 |
+|--------------|-------------|-------------|-------------|
+| biscuits     | Yes         | Yes         | Yes         |
+| soap         | Yes         | Yes         | Yes         |
+| soap2        | Yes         | Yes         | Yes         |
+| book         | No          | Yes         | Yes         |
+| glue         | No          | Yes         | Yes         |
+| sticky_notes | No          | No          | Yes         |
+| snacks       | No          | No          | Yes         |
+| eraser       | No          | No          | Yes         |
+
+In order to create the training set for these new objects, I created a copy of the `capture_features.py` file and renamed it to `capture_features_project.py`. I updated the list of models on to match the items shown above.
+
+```python
+models = [\
+   'biscuits',
+   'soap',
+   'soap2',
+   'book',
+   'glue',
+   'sticky_notes',
+   'snacks',
+   'eraser'
+   ]
+
+```
+
+Another modification that I did was increase the for loop for each object to take 25 samples in hopes that it will build a very strong model. Per the data presented above in this writeup, I left the `using_hsv` parameter set to `True` for best performance. The final modification to this script was to save the file under a new file name:
+`pickle.dump(labeled_features, open('training_set_project.sav', 'wb')`
+
+Upon completion of the running the `capture_features_project.py` script, I made a copy of the `train_svm.py` script and rightly called it `train_svm_project.py`. The only modification necessary for this script was to update the filename to `training_set_project.sav`. The following figure shows the resulting confusion matrix.
+
+![confmatrix_project_25]
+
+I was a bit disappointed to see that the accuracy came in just below 90%. Not wanting to get the project off to a poor start, I decided to update the `capture_features_project.py` code to sample each object 45 times and then rerun the script. With the increased sample size, the following figure shows the confusion matrix:
+
+![confmatrix_project_45]
+
+With an accuracy slightly above 92%, that's much better! The table below shows a comparison between the two training runs:
+
+| Samples Per Object | Features In Training Set | Accuracy        | Accuracy Score |
+|--------------------|--------------------------|-----------------|----------------|
+| 25                 | 200                      | 0.89 (+/- 0.12) | 0.894472       |
+| 45                 | 360                      | 0.92 (+/- 0.11) | 0.922222       |
+
+I will proceed ahead with the training dataset built with 45 samples of each object.
+
+The next step was to write a ROS node and subscribe to /pr2/world/points topic. Following the project guide, I created `perception.py` based off the `project_template.py` file provided in the repository and ported over the code from Exercise 3. I added in the filter to remove outliers using k_mean filtering before doing the Voxel Grid Downsampling, per the template.
+
+```python
+    # Much like the previous filters, we start by creating a filter object: 
+    outlier_filter = cloud.make_statistical_outlier_filter()
+
+    # Set the number of neighboring points to analyze for any given point
+    outlier_filter.set_mean_k(50)
+
+    # Set threshold scale factor
+    x = 1.0
+
+    # Any point with a mean distance larger than global (mean distance+x*std_dev) will be considered outlier
+    outlier_filter.set_std_dev_mul_thresh(x)
+
+    # Finally call the filter function for magic
+    cloud_no_stat_outliers = outlier_filter.filter()
+ ```
+
+At this point, I was able to run the code and start to observe it's performance on the first test world. No errors or otherwise major issues, however I noticed that the labeling of the items wasn't quite accurate yet - in fact, it was seeing extra objects. This lead me to begin improving the performance by tweaking the tolerances of the clustering. One challenge I noticed was preventing the points in the cloud from the bin on the left of the robot from being detected as an object, such as in the screenshot below where the robot is seeing this as `snacks` but it should not be recognized as an item.
+
+![extra_snacks]
+
+Ultimately, I decided to add another passthrough filter to the code, this time for the 'y' axis. I played with the `axis_min` and `axis_max` settings and experimented until I was able to remove the corner of the bin that was in the field of view. I also learned that it's possible to see the XYZ coordinate points in RViz using the Selection panel. This helped me to verify that I was in fact filtering for the correct axis and that the `axis_min` and `axis_max` were being set appropriately. This then got rid of the false positives on a fourth object.
+
+Further refinement on the clustering and segmentation parameters got me to the point where the recognition was working well in all three worlds. In fact, it was able to correctly identify all the objects in worlds 1 and 3, and just one object identified incorrectly in test world 2. That darn book is always perceived to be biscuits, maybe the pr2_robot is always hungry ;-)
+
+![testworld1]
+
+![testworld2]
+
+![testworld3]
+
+6. Calculate the centroid (average in x, y and z) of the set of points belonging to that each object.
+7. Create ROS messages containing the details of each object (name, pick_pose, etc.) and write these messages out to .yaml files, one for each of the 3 scenarios (test1-3.world in /pr2_robot/worlds/). See the example output.yaml for details on what the output should look like.
+8. Submit a link to your GitHub repo for the project or the Python code for your perception pipeline and your output .yaml files (3 .yaml files, one for each test world). You must have correctly identified 100% of objects from pick_list_1.yaml for test1.world, 80% of items from pick_list_2.yaml for test2.world and 75% of items from pick_list_3.yaml in test3.world.
+9. Congratulations! Your Done!
 
 You can add this functionality to your already existing ros node or create a new node that communicates with your perception pipeline to perform sequential object recognition. Save your PickPlace requests into output_1.yaml, output_2.yaml, and output_3.yaml for each scene respectively. Add screenshots in your writeup of output showing label markers in RViz to demonstrate your object recognition success rate in each of the three scenarios. Note: for a passing submission, your pipeline must correctly identify 100% of objects in test1.world, 80% (4/5) in test2.world and 75% (6/8) in test3.world.
 
