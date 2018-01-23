@@ -2,7 +2,7 @@
 Project submission for the Udacity Robotics Software Engineer Nanodegree
 
 Jonathan Georgino
-January 21 2018
+January 22 2018
 
 ---
 
@@ -21,8 +21,6 @@ January 21 2018
 [testworld3]: ./figures/testworld3.png
 
 ![testworld3]
-
-TODO: Write up summary in this section
 
 ## [Rubric](https://review.udacity.com/#!/rubrics/1067/view) Points 
 
@@ -152,20 +150,119 @@ Ultimately, I decided to add another passthrough filter to the code, this time f
 
 Further refinement on the clustering and segmentation parameters got me to the point where the recognition was working well in all three worlds. In fact, it was able to correctly identify all the objects in worlds 1 and 3, and just one object identified incorrectly in test world 2. That darn book is always perceived to be biscuits, maybe the pr2_robot is always hungry ;-)
 
+**TestWorld1 - 3/3**
 ![testworld1]
 
+**TestWorld2 - 4/5**
 ![testworld2]
 
+**TestWorld3 - 8/8**
 ![testworld3]
 
-6. Calculate the centroid (average in x, y and z) of the set of points belonging to that each object.
-7. Create ROS messages containing the details of each object (name, pick_pose, etc.) and write these messages out to .yaml files, one for each of the 3 scenarios (test1-3.world in /pr2_robot/worlds/). See the example output.yaml for details on what the output should look like.
-8. Submit a link to your GitHub repo for the project or the Python code for your perception pipeline and your output .yaml files (3 .yaml files, one for each test world). You must have correctly identified 100% of objects from pick_list_1.yaml for test1.world, 80% of items from pick_list_2.yaml for test2.world and 75% of items from pick_list_3.yaml in test3.world.
-9. Congratulations! Your Done!
+After getting the object recognition to this level, I took a break from the project and returned the next day to begin implementing the generation of the `.yaml` files. During this phase of the project development, I wrote the code in `pr2_mover()` function in the `perception.py` file. Stepping through this function, the first thing I did was initialize the variables necessary to achieve the goal. [Note that I did not attempt to actually have the PR2 robot perform the placements, my goal was just to generate the `.yaml` output files.]
 
-You can add this functionality to your already existing ros node or create a new node that communicates with your perception pipeline to perform sequential object recognition. Save your PickPlace requests into output_1.yaml, output_2.yaml, and output_3.yaml for each scene respectively. Add screenshots in your writeup of output showing label markers in RViz to demonstrate your object recognition success rate in each of the three scenarios. Note: for a passing submission, your pipeline must correctly identify 100% of objects in test1.world, 80% (4/5) in test2.world and 75% (6/8) in test3.world.
+```python
+# TODO: Initialize variables
+test_scene_num = Int32()
+arm_name = String()
+obj_name = String()
+pick_pose = Pose()
+place_pose = Pose()
 
-Spend some time at the end to discuss your code, what techniques you used, what worked and why, where the implementation might fail and how you might improve it if you were going to pursue this project further.  
+place_pose_red = Pose()
+place_pose_green = Pose()
 
+dict_list = []
+
+yaml_filename = ''
+test_scene_num.data = 3
+
+if test_scene_num.data == 1:
+    yaml_filename = 'output_1.yaml'
+
+elif test_scene_num.data == 2:
+    yaml_filename = 'output_2.yaml'
+
+elif test_scene_num.data == 3:
+    yaml_filename = 'output_3.yaml'
+else:
+    yaml_filename = 'output_unknown.yaml'
+
+```
+
+The datatypes used for the variables above comes from inspecting the associated ros messages. I also used an `if` statement to set the output file name accordingly. The next step was to get the information from the object pick list as well as the dropbox information, both of which are available via the ros parameter server. The following lines of code are used to retreive this data. I also capture and store the pose information for each of the dropboxes for use later in the loops so that I don't need to look up this information for every single object on the pick list.
+
+```python
+# TODO: Get/Read parameters
+object_list_param = rospy.get_param('/object_list')
+dropbox_param = rospy.get_param('/dropbox')
+
+# TODO: Parse parameters into individual variables
+place_pose_red.position.x = dropbox_param[0]['position'][0]
+place_pose_red.position.y = dropbox_param[0]['position'][1]
+place_pose_red.position.z = dropbox_param[0]['position'][2]
+
+place_pose_green.position.x = dropbox_param[1]['position'][0]
+place_pose_green.position.y = dropbox_param[1]['position'][1]
+place_pose_green.position.z = dropbox_param[1]['position'][2]
+```
+
+At this point, I have everything I need to begin iterating through the list of objects. With each iteration of the loop, the desired object name is compared to the list of items discovered in the environment. Upon matching the object names, the centroid of the desired object is computed, formatted appropriately, and then placed into the `pick_pose` datatype. Following this, the `arm_name` is assigned to be `left` or `right` based on the target bin color (`red` or `green`) as specified in the pick list. At this point, the `place_pose` can also be assigned, which was already read in and stored. Now the dictionary is created using the provided `make_yaml_dict()` function by passing the parameters mentioned above, and added to the list that's being kept for each item on the pick list. Finally, after all objects on the pick list have been traversed in the loop, `send_to_yaml()` function is called to create the desired output file for the world.
+
+```python
+# TODO: Loop through the pick list
+for i in range(0, len(object_list_param)):
+    
+    object_name = object_list_param[i]['name']
+    object_group = object_list_param[i]['group']
+
+    print ("%d : %s in group %s" % (i, object_name, object_group))
+
+    for obj in object_list:
+
+        if obj.label == object_name:
+            obj_name.data = object_name
+
+            # TODO: Get the PointCloud for a given object and obtain it's centroid
+            obj_points_arr = ros_to_pcl(obj.cloud).to_array()
+            obj_centroid_float = np.mean(obj_points_arr, axis=0)[:3]
+
+            pick_pose.position.x = np.asscalar(obj_centroid_float[0])
+            pick_pose.position.y = np.asscalar(obj_centroid_float[1])
+            pick_pose.position.z = np.asscalar(obj_centroid_float[2])
+            
+            # TODO: Assign the arm to be used for pick_place
+            # TODO: Create 'place_pose' for the object
+            if object_group == 'green':
+                arm_name.data = 'right'
+                place_pose = place_pose_green
+            else:
+                arm_name.data = 'left'
+                place_pose = place_pose_red
+
+            print ("Creating dictionary for %s" % (obj_name.data))
+
+            # TODO: Create a list of dictionaries (made with make_yaml_dict()) for later output to yaml format
+            yaml_dict = make_yaml_dict(test_scene_num, arm_name, obj_name, pick_pose, place_pose)
+            dict_list.append(yaml_dict)
+
+# TODO: Output your request parameters into output yaml file
+send_to_yaml(yaml_filename, dict_list)
+
+```
+
+The output files generated by this script are included in the repository for review. 
+
+A comparison between `pick_list_1.yaml` and `output_1.yaml` shows that all 3 objects were identified and picked in the correct order and placed into the desired bin.
+
+A comparison between `pick_list_2.yaml` and `output_2.yaml` shows that the book was incorrectly identified as biscuits, and as such, the two items perceived to be biscuits were picked first, followed by the remaining list items in the correct order, skipping over the book item which the robot did not perceive to be in the world.
+
+A comparison between `pick_list_3.yaml` and `output_3.yaml` shows that all 8 objects were identified and picked in the correct order and placed into the desired bin.
+
+Overall, I am satisfied with the results of the project, however there are some clear areas that could be improved. I believe that by increasing the number of sample images in the training dataset could enable the robot to detect the book in world2. There are also some few instances in world3 where the sticky_notes are errantly recognized as soap2, which I believe would also be improved with a larger set of training data.
+
+Another point of improvement would be such after an object has been found when looping through the pick list, it break out of the loop and advances to the next item. This would enable a more graceful solution when objects in the world are errantly recognized multiple times. For example, this would mean for my world2 trial that only one box of biscuits would be placed into the bin, instead of it placing two objects into the bin for this single item on the pick list.
+
+Lastly, I could have taken the time to go the extra mile and implement the collision mapping and actual transmission of the ROS messages to the robot to try to actually carry out the pick and place movements in the simulated environment. However running this project in VMWare is quite taxing on my laptop and it's not a very enjoyable development environment as it runs painfully slow. With a better development environment, I would be much more interested in pursuing these challenging tasks.
 
 
